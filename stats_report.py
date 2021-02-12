@@ -14,7 +14,9 @@ def calculate_pnl(w, ret, T, lags=np.arange(21)):
 
     fig = plt.figure(figsize=(14, 4))
     for lag in [0, 1, 2, 5, 10, 20]:
-        plt.plot(T, np.cumsum(pnls[lag]), label=f'Lag {lag}')
+        cumpnl = np.cumsum(pnls[lag])
+        cumpnl = np.where(np.isnan(w).all(axis=1), np.nan, cumpnl)
+        plt.plot(T, cumpnl, label=f'Lag {lag}')
     plt.grid()
     plt.legend()
     plt.title('PnL')

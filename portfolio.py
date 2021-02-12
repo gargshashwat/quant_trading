@@ -6,7 +6,7 @@ from utils import *
 
 
 def sub_cp(t):
-    (end_date, sub_alpha, N, mode) = t
+    (end_date, sub_alpha, N, mode, dollar_neutral) = t
 
     if mode == 'research':
         with open(f"inv_cov/{pd.datetime(end_date.year, end_date.month, 1).strftime('%Y%m%d')}.npy", 'rb') as f:
@@ -20,14 +20,22 @@ def sub_cp(t):
         cov_inv = np.linalg.inv(cov)
 
     w = np.dot(nanToZero(cov_inv), nanToZero(sub_alpha.T))
+
+    if dollar_neutral:
+        one = np.ones_like(sub_alpha.T)
+        w2 = np.dot(nanToZero(cov_inv), one)
+        c1 = nanToZero(cov_inv).sum()
+        c2 = np.dot(np.ones((1, w.shape[0])), w)
+        w = c1 * w - c2 * w2
+
     return w.T
 
 
-def characteristic_portfolio(alpha, mode):
+def characteristic_portfolio(alpha, mode, dollar_neutral=False):
     start_dates = [(i, d) for i, d in enumerate(alpha.T) if d.month != alpha.T[i - 1].month]
     end_dates = [(i - 1, alpha.T[i - 1]) for (i, d) in start_dates[1:]] + [(len(alpha.T) - 1, alpha.T[-1])]
     date_ranges = [(i, j, s, e) for ((i, s), (j, e)) in zip(start_dates, end_dates)]
-    mp_input = [(e, alpha.alpha[i:j+1, :], alpha.N, mode) for (i, j, s, e) in date_ranges]
+    mp_input = [(e, alpha.alpha[i:j+1, :], alpha.N, mode, dollar_neutral) for (i, j, s, e) in date_ranges]
 
     pool = mp.Pool(processes=4)
     results = pool.map(sub_cp, mp_input)
