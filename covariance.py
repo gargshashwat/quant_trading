@@ -117,7 +117,8 @@ def save_cov_inv():
     """Save inverse covariance matrices for a fixed subset of stock and dates
     make reserach faster."""
     N = get_df_from_db(f"""SELECT * FROM mapping""").id.tolist()[:500]
-    for end_date in pd.date_range('2015-01-01', '2021-01-01', freq='MS'):
+    for end_date in pd.date_range('2010-01-01', '2021-01-01', freq='MS'):
+        print(end_date)
         cov = sample_covariance_matrix(N, 250, end_date)
         cov = smooth_noise_cov(cov, K=10)
         cov_inv = np.linalg.inv(cov)

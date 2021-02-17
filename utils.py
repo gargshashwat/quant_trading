@@ -13,6 +13,7 @@ class Alpha:
     T = None    # np.array of dates of size 1xT
     N = None    # np.array of stock ids of size 1xN
     alpha = None    # np.array of factor scores of size TxN
+    holdings = None   # np.array of portfolio weights of size TxN
 
     def plot_moments(self):
         arr = zeroToNan(self.alpha)
@@ -81,42 +82,6 @@ class Alpha:
         plt.xticks(lags)
         plt.show()
         print(f'Half-life is {np.argmax(np.array(ar) <= 0.5)}')
-
-    def raw_ic_analysis(self):
-        # plot IC-decay
-        in_sample_idx = [idx for idx, d in enumerate(self.T) if (d.year % 2 == 0 and np.ceil(d.month / 3) % 2 == 0) or (d.year % 2 == 1 and np.ceil(d.month / 3) % 2 == 1)]
-        ret = get_returns(self.N, self.T)
-
-        # make mean = 0 and std = 1 across every day so that mean of IC is consistent with overall IC
-        in1 = zeroToNan(self.alpha).copy()
-        in2 = ret.copy()
-
-        in1 -= np.nanmean(in1, axis=1).reshape(-1, 1)
-        in1 /= np.nanstd(in1, axis=1).reshape(-1, 1)
-
-        in2 -= np.nanmean(in2, axis=1).reshape(-1, 1)
-        in2 /= np.nanstd(in2, axis=1).reshape(-1, 1)
-
-        plot_ic_decay(in1, in2, lags=np.arange(-10, 10), in_sample_idx=in_sample_idx)
-        plot_ic_decay(in1, in2, lags=np.arange(10), in_sample_idx=in_sample_idx)
-
-        # plot IC over time
-        in1[in_sample_idx, :] = np.nan
-        in2[in_sample_idx, :] = np.nan
-        ic = []
-        for t in np.arange(in1.shape[0]):
-            in11 = in1[t, :]
-            in22 = in2[t, :]
-            mask = ~(np.isnan(in11) | np.isnan(in22))
-            ic.append(np.corrcoef(in11[mask], in22[mask])[0, 1])
-
-        plt.figure(figsize=(14, 4))
-        plt.plot(self.T, ic)
-        plt.grid()
-        plt.ylabel('IC')
-        plt.show()
-        print(f'Mean IC: {np.nanmean(ic)}, std of IC: {np.nanstd(ic)}')
-        print(f'Ratio (annualised): {np.sqrt(252) * np.nanmean(ic) / np.nanstd(ic)}')
 
 
 def get_df_from_db(query):
@@ -219,24 +184,43 @@ def plot_autocorrelation(arr, lags=np.arange(10)):
     return fig
 
 
-def ic_decay(arr, ret, lags=np.arange(-10,10), in_sample_idx=None):
+def ic_decay(arr, ret, lags=np.arange(-10,10), oos_idx=None, ts=False):
     """Take care to not allow np.inf values in arr and ret. These will lead to nan values."""
-    if in_sample_idx:
+    if oos_idx:
         arr = arr.copy()
-        arr[in_sample_idx, :] = np.nan
+        arr[oos_idx, :] = np.nan
 
     in1 = zeroToNan(arr)
+    in1 -= np.nanmean(in1, axis=1).reshape(-1, 1)
+    in1 /= np.nanstd(in1, axis=1).reshape(-1, 1)
+
     in2 = zeroToNan(ret)
+    in2 -= np.nanmean(in2, axis=1).reshape(-1, 1)
+    in2 /= np.nanstd(in2, axis=1).reshape(-1, 1)
+
     ic = []
     for lag in lags:
         in1_lagged = shift(in1, lag)
         mask = ~(np.isnan(in1_lagged) | np.isnan(in2))
         ic.append(np.corrcoef(in1_lagged[mask], in2[mask])[0,1])
+
+    if ts:
+        # IC over time
+        ic_ts = []
+        for t in np.arange(in1.shape[0]):
+            in11 = in1[t, :]
+            in22 = in2[t, :]
+            mask = ~(np.isnan(in11) | np.isnan(in22))
+            ic_ts.append(np.corrcoef(in11[mask], in22[mask])[0, 1])
+
+        print(f'Mean IC: {np.nanmean(ic_ts)}, std of IC: {np.nanstd(ic_ts)}')
+        print(f'Ratio (annualised): {np.sqrt(252) * np.nanmean(ic_ts) / np.nanstd(ic_ts)}')
+
     return ic
 
 
-def plot_ic_decay(arr, ret, lags=np.arange(-10,10), in_sample_idx=None):
-    ic = ic_decay(arr, ret, lags, in_sample_idx)
+def plot_ic_decay(arr, ret, lags=np.arange(-10,10), oos_idx=None, ts=False):
+    ic = ic_decay(arr, ret, lags, oos_idx, ts)
     fig = plt.figure(figsize=(14,4))
     plt.plot(lags, ic)
     plt.grid()
@@ -246,10 +230,10 @@ def plot_ic_decay(arr, ret, lags=np.arange(-10,10), in_sample_idx=None):
     return fig
 
 
-def plot_ic_vs_autocorrelation(arr, ret, lags=np.arange(10), in_sample_idx=None):
-    ic = ic_decay(arr, ret, lags, in_sample_idx)
+def plot_ic_vs_autocorrelation(arr_scores, arr_holdings, ret, lags=np.arange(10), oos_idx=None):
+    ic = ic_decay(arr_holdings, ret, lags, oos_idx)
     ic /= ic[0]
-    ar = autocorrelation(arr, lags)
+    ar = autocorrelation(arr_scores, lags)
 
     fig = plt.figure(figsize=(14, 4))
     plt.plot(lags, ar, label='Autocorrelation')

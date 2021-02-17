@@ -20,14 +20,14 @@ def calculate_pnl(w, ret, T, lags=np.arange(21)):
     plt.grid()
     plt.legend()
     plt.title('PnL')
-    plt.show()
     return pnls, fig
 
 
-def drawdown(pnl, T):
+def drawdown(pnl, w, T):
     cumpnl = np.cumsum(pnl)
     mx = np.maximum.accumulate(cumpnl)
     dd = cumpnl - mx
+    dd = np.where(np.isnan(w).all(axis=1), np.nan, dd)
 
     fig = plt.figure(figsize=(14, 4))
     plt.plot(T, dd)
@@ -93,6 +93,11 @@ def calculate_stats(w, ret, pnls):
     trades_lost = (nanToZero(w * ret) < 0).sum()
     hit_ratio = trades_won / (trades_won + trades_lost)
 
+    each_pnl = nanToZero(w * ret)
+    avg_profit = each_pnl[each_pnl > 0].mean()
+    avg_loss = - each_pnl[each_pnl < 0].mean()
+    PvsL_ratio = avg_profit / avg_loss
+
     irs = [(np.nanmean(pnl) / np.nanstd(pnl)) * np.sqrt(252) for pnl in pnls.values()]
     irs /= irs[0]
     halflife = np.argmax(irs <= 0.5)
@@ -105,6 +110,7 @@ def calculate_stats(w, ret, pnls):
                        'ROE (%)': round(roe, 2),
                        'ROT (bps)': round(100 * rot, 2),
                        'hit_ratio %': round(100 * hit_ratio, 1),
+                       'P/L': round(PvsL_ratio, 3),
                        'halflife': halflife}, index=[0])
     return df
 
@@ -163,26 +169,35 @@ def ir_vix_quantiles(pnl, T):
     return fig
 
 
-def generate_alpha_report(alpha, hide_oos=True):
-    w = characteristic_portfolio(alpha)
+def generate_alpha_report(alpha, mode='prod', dollar_neutral=False, hide_oos=True):
+    alpha.holdings = characteristic_portfolio(alpha, mode, dollar_neutral=dollar_neutral)
 
-    in_sample_idx = None
+    oos_idx = None
     if hide_oos:
-        in_sample_idx = [idx for idx, d in enumerate(alpha.T) if
+        oos_idx = [idx for idx, d in enumerate(alpha.T) if
                          (d.year % 2 == 0 and np.ceil(d.month / 3) % 2 == 0) or (d.year % 2 == 1 and np.ceil(d.month / 3) % 2 == 1)]
-        w[in_sample_idx, :] = np.nan
+        alpha.holdings[oos_idx, :] = np.nan
 
     ret = get_returns(alpha.N, alpha.T)
-    pnls, fig1 = calculate_pnl(w, ret, alpha.T)
-    fig2 = drawdown(pnls[0], alpha.T)
+    pnls, fig1 = calculate_pnl(alpha.holdings, ret, alpha.T)
+    fig2 = drawdown(pnls[0], alpha.holdings, alpha.T)
     irs, fig3 = calculate_ir(pnls)
-    fig4 = ir_decile(w, ret)
-    df = calculate_stats(w, ret, pnls)
+    fig4 = ir_decile(alpha.holdings, ret)
+    df = calculate_stats(alpha.holdings, ret, pnls)
     fig5 = ir_up_down_markets(pnls[0], alpha.T)
     fig6 = ir_vix_quantiles(pnls[0], alpha.T)
     fig7 = plot_autocorrelation(alpha.alpha)
-    fig8 = plot_ic_decay(alpha.alpha, ret, in_sample_idx=in_sample_idx)
-    fig9 = plot_ic_vs_autocorrelation(alpha.alpha, ret, in_sample_idx=in_sample_idx)
+
+    fig8 = plot_ic_decay(alpha.holdings, ret, oos_idx=oos_idx)
+    fig9 = plot_ic_decay(alpha.holdings, ret, oos_idx=oos_idx, lags=np.arange(10), ts=True)
+    fig10 = plot_ic_vs_autocorrelation(alpha.alpha, alpha.holdings, ret, oos_idx=oos_idx)
+
+    # distribution of cumpnl per stock
+    each_pnl = nanToZero(alpha.holdings * ret)
+    cumpnl = np.cumsum(each_pnl, axis=0)
+    fig11 = plt.figure(figsize=(14, 4))
+    plt.hist(cumpnl[-1, :], bins=100)
+    plt.grid()
 
     pp = PdfPages(f'reports/{alpha.name}_{alpha.region}.pdf')
 
@@ -201,4 +216,45 @@ def generate_alpha_report(alpha, hide_oos=True):
     pp.savefig(fig7)
     pp.savefig(fig8)
     pp.savefig(fig9)
+    pp.savefig(fig10)
+    pp.savefig(fig11)
     pp.close()
+
+
+def mini_alpha_report(alpha, ret, mode='research', dollar_neutral=False, hide_oos=True):
+    alpha.holdings = characteristic_portfolio(alpha, mode, dollar_neutral=dollar_neutral)
+
+    if hide_oos:
+        oos_idx = [idx for idx, d in enumerate(alpha.T) if
+                         (d.year % 2 == 0 and np.ceil(d.month / 3) % 2 == 0) or (d.year % 2 == 1 and np.ceil(d.month / 3) % 2 == 1)]
+        alpha.holdings[oos_idx, :] = np.nan
+
+    turnover = np.abs(nanToZero(alpha.holdings) - nanToZero(shift(alpha.holdings, 1))).sum(axis=1) / 1e4
+    turnover = zeroToNan(turnover)
+    if hide_oos:
+        turnover[oos_idx] = np.nan
+    turnover = np.nanmean(turnover)
+
+    pnl = zeroToNan(nanToZero(alpha.holdings * ret).sum(axis=1))
+    roe = np.nanmean(pnl) * 252 / 1e4
+    rot = np.nanmean(pnl) * 100 / (turnover * 1e4)
+
+    trades_won = (nanToZero(alpha.holdings * ret) > 0).sum()
+    trades_lost = (nanToZero(alpha.holdings * ret) < 0).sum()
+    hit_ratio = trades_won / (trades_won + trades_lost)
+
+    each_pnl = nanToZero(alpha.holdings * ret)
+    avg_profit = each_pnl[each_pnl > 0].mean()
+    avg_loss = - each_pnl[each_pnl < 0].mean()
+    PvsL_ratio = avg_profit / avg_loss
+
+    ir = (np.nanmean(pnl) / np.nanstd(pnl)) * np.sqrt(252)
+
+    df = pd.DataFrame({'IR': round(ir, 2),
+                       'turnover %': round(turnover, 0),
+                       'ROE (%)': round(roe, 2),
+                       'ROT (bps)': round(100 * rot, 2),
+                       'hit_ratio %': round(100 * hit_ratio, 1),
+                       'P/L': PvsL_ratio}, index=[0])
+
+    display(df)

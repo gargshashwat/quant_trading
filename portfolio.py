@@ -32,8 +32,14 @@ def sub_cp(t):
 
 
 def characteristic_portfolio(alpha, mode, dollar_neutral=False):
+    assert len(alpha.alpha[np.isinf(alpha.alpha)]) == 0, 'inf values present in factor scores'
+
     start_dates = [(i, d) for i, d in enumerate(alpha.T) if d.month != alpha.T[i - 1].month]
     end_dates = [(i - 1, alpha.T[i - 1]) for (i, d) in start_dates[1:]] + [(len(alpha.T) - 1, alpha.T[-1])]
+    if start_dates[0][0] != 0:
+        start_dates = [(0, alpha.T[0])] + start_dates
+        end_dates = [(start_dates[1][0] - 1, alpha.T[start_dates[1][0] - 1])] + end_dates
+
     date_ranges = [(i, j, s, e) for ((i, s), (j, e)) in zip(start_dates, end_dates)]
     mp_input = [(e, alpha.alpha[i:j+1, :], alpha.N, mode, dollar_neutral) for (i, j, s, e) in date_ranges]
 
